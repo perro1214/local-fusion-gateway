@@ -4,6 +4,16 @@ OpenAI-compatible local gateway for running a Fusion-style panel, judge, and syn
 
 The implementation follows the local v1 policy in `../方針.md`.
 
+## Current Status
+
+The current `main` branch has a working v1 Gateway:
+
+- Plain proxy and Fusion requests are implemented.
+- Gemini OpenAI-compatible smoke tests pass with `models/gemini-2.5-flash-lite`.
+- Fusion judge calls request structured JSON with `response_format: json_schema`.
+- Backends that reject `response_format` with `400` or `422` are retried once without it.
+- Fusion debug metadata is available on request without exposing prompts or panel outputs.
+
 ## Features
 
 - `GET /health`
@@ -12,8 +22,10 @@ The implementation follows the local v1 policy in `../方針.md`.
 - Fusion execution when `model` is `openrouter/fusion`
 - Fusion execution when `tool_choice` is `required` and `tools` contains `openrouter:fusion`
 - Parallel panel calls with partial-failure tolerance
-- Judge JSON parsing with degraded fallback when the judge does not return valid JSON
+- Judge structured output via `response_format: json_schema`
+- Judge JSON parsing with degraded fallback when the judge does not return valid schema JSON
 - Non-streaming chat completions only
+- `X-Request-ID` request tracking
 - Optional Fusion debug metadata with `X-Local-Fusion-Debug: true`
 
 v1 intentionally does not execute `openrouter:web_search` or `openrouter:web_fetch`. Those tools are accepted in Fusion parameters but ignored.
@@ -80,6 +92,46 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 When debug is enabled, the response includes a top-level `local_fusion` object with request id, model names, latency, failed models, and degradation state. It does not include user prompt text or panel response text.
 
+Example debug metadata shape:
+
+```json
+{
+  "local_fusion": {
+    "request_id": "3b4b1032669d4611addebf59219c30df",
+    "panel_models": ["gemini-panel-a"],
+    "judge_model": "gemini-judge",
+    "failed_models": [],
+    "analysis_present": true,
+    "degraded_reason": null,
+    "latency_ms": {
+      "total": 3312.56,
+      "panels": [
+        {
+          "model": "gemini-panel-a",
+          "success": true,
+          "latency_ms": 1063.68,
+          "status_code": 200
+        }
+      ],
+      "judge": {
+        "model": "gemini-judge",
+        "success": true,
+        "latency_ms": 1233.56,
+        "status_code": 200,
+        "retry_without_response_format": false
+      },
+      "synthesis": {
+        "model": "gemini-judge",
+        "success": true,
+        "latency_ms": 1014.71,
+        "status_code": 200,
+        "retry_without_response_format": false
+      }
+    }
+  }
+}
+```
+
 ## Gemini API Smoke Test
 
 Gemini's OpenAI-compatible endpoint can be used as a quick external backend test. The official base URL is:
@@ -93,6 +145,12 @@ Run a direct proxy smoke test through the Gateway code without starting a server
 ```bash
 export GEMINI_API_KEY="..."
 uv run --extra dev python scripts/smoke_gemini.py
+```
+
+If your API key is exported from `.zshrc`, run the smoke command through interactive zsh:
+
+```bash
+zsh -ic 'cd /Users/hayato/project/OSS_LLM_fusion/project && uv run --extra dev python scripts/smoke_gemini.py'
 ```
 
 Run the Fusion path too:
@@ -111,6 +169,12 @@ Show local Fusion debug metadata in the smoke response:
 
 ```bash
 uv run --extra dev python scripts/smoke_gemini.py --fusion-only --debug
+```
+
+The latest verified Gemini debug smoke command is:
+
+```bash
+zsh -ic 'cd /Users/hayato/project/OSS_LLM_fusion/project && uv run --extra dev python scripts/smoke_gemini.py --fusion-only --debug'
 ```
 
 The sample config defaults to `models/gemini-2.5-flash-lite` because it is inexpensive and suitable for smoke tests. You can temporarily override the Gemini model used by all logical roles:
@@ -173,3 +237,9 @@ uv run --extra dev ruff format .
 ```
 
 The test suite mocks all downstream LLM HTTP calls, so local LLM servers are not required for automated tests.
+
+Current verification baseline:
+
+- `uv run --extra dev pytest` passes with 19 tests.
+- `uv run --extra dev ruff check .` passes.
+- `uv run --extra dev ruff format --check .` passes.
