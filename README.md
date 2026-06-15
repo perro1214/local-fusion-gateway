@@ -1,8 +1,13 @@
 # Local Fusion Gateway
 
+[![CI](https://github.com/perro1214/local-fusion-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/perro1214/local-fusion-gateway/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 OpenAI-compatible local gateway for running a Fusion-style panel, judge, and synthesis flow against local LLM servers such as Ollama, LM Studio, and llama.cpp.
 
-The implementation follows the local v1 policy in `../方針.md`.
+This is an experimental alpha project. It is not an official OpenRouter implementation, and it does not try to fully reproduce OpenRouter's hosted Fusion behavior. The goal is a practical local gateway that can be used by existing OpenAI-compatible clients by changing the base URL.
+
+The implementation follows the local v1 policy in [docs/policy-ja.md](docs/policy-ja.md).
 
 ## Current Status
 
@@ -134,7 +139,7 @@ Example debug metadata shape:
 
 ## Gemini API Smoke Test
 
-Gemini's OpenAI-compatible endpoint can be used as a quick external backend test. The official base URL is:
+Gemini's OpenAI-compatible endpoint can be used as a quick external backend test. This is optional and is not part of CI. The official base URL is:
 
 ```text
 https://generativelanguage.googleapis.com/v1beta/openai/
@@ -145,12 +150,6 @@ Run a direct proxy smoke test through the Gateway code without starting a server
 ```bash
 export GEMINI_API_KEY="..."
 uv run --extra dev python scripts/smoke_gemini.py
-```
-
-If your API key is exported from `.zshrc`, run the smoke command through interactive zsh:
-
-```bash
-zsh -ic 'cd /Users/hayato/project/OSS_LLM_fusion/project && uv run --extra dev python scripts/smoke_gemini.py'
 ```
 
 Run the Fusion path too:
@@ -169,12 +168,6 @@ Show local Fusion debug metadata in the smoke response:
 
 ```bash
 uv run --extra dev python scripts/smoke_gemini.py --fusion-only --debug
-```
-
-The latest verified Gemini debug smoke command is:
-
-```bash
-zsh -ic 'cd /Users/hayato/project/OSS_LLM_fusion/project && uv run --extra dev python scripts/smoke_gemini.py --fusion-only --debug'
 ```
 
 The sample config defaults to `models/gemini-2.5-flash-lite` because it is inexpensive and suitable for smoke tests. You can temporarily override the Gemini model used by all logical roles:
@@ -231,9 +224,9 @@ print(response.choices[0].message.content)
 ## Development
 
 ```bash
-uv run --extra dev pytest
 uv run --extra dev ruff check .
-uv run --extra dev ruff format .
+uv run --extra dev ruff format --check .
+uv run --extra dev pytest
 ```
 
 The test suite mocks all downstream LLM HTTP calls, so local LLM servers are not required for automated tests.

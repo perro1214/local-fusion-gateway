@@ -4,6 +4,30 @@ version = "0.1.0"
 description = "OpenAI-compatible local Fusion gateway for local LLM backends."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Hayato Harada" },
+]
+keywords = [
+    "ai",
+    "fastapi",
+    "fusion",
+    "llm",
+    "local-llm",
+    "openai-compatible",
+    "openrouter",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.27.0",
@@ -22,6 +46,11 @@ dev = [
 
 [project.scripts]
 local-fusion-gateway = "local_fusion_gateway.main:main"
+
+[project.urls]
+Homepage = "https://github.com/perro1214/local-fusion-gateway"
+Repository = "https://github.com/perro1214/local-fusion-gateway"
+Issues = "https://github.com/perro1214/local-fusion-gateway/issues"
 
 [build-system]
 requires = ["hatchling"]
