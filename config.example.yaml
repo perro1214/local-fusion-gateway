@@ -1,0 +1,27 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+  request_timeout_seconds: 120
+
+fusion:
+  default_analysis_models:
+    - "ollama-qwen"
+    - "lmstudio-llama"
+  default_judge_model: "ollama-qwen"
+
+models:
+  ollama-qwen:
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen3:8b"
+
+  lmstudio-llama:
+    base_url: "http://localhost:1234/v1"
+    api_key: "lm-studio"
+    model: "local-model"
+
+  llamacpp-mistral:
+    base_url: "http://localhost:8081/v1"
+    api_key: "llamacpp"
+    model: "mistral"
+
