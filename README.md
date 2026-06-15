@@ -97,6 +97,18 @@ Run the Fusion path too:
 uv run --extra dev python scripts/smoke_gemini.py --fusion
 ```
 
+If the preliminary proxy request hits a transient Gemini `503 high demand`, skip it and run only the Fusion path:
+
+```bash
+uv run --extra dev python scripts/smoke_gemini.py --fusion-only
+```
+
+You can also temporarily override the Gemini model used by all logical roles:
+
+```bash
+uv run --extra dev python scripts/smoke_gemini.py --fusion-only --model gemini-flash-latest
+```
+
 The Fusion smoke test uses one panel model plus one judge model, both configured in `config.gemini.example.yaml`. Because the same Gemini model is used for both logical roles, this is only a connectivity and pipeline test, not a quality benchmark.
 
 ## Explicit Fusion Tool Request
