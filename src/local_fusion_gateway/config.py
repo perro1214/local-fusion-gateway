@@ -51,8 +51,19 @@ def load_config(path: str | os.PathLike[str]) -> GatewayConfig:
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as file:
         raw: dict[str, Any] = yaml.safe_load(file) or {}
+    raw = _expand_env_vars(raw)
     return GatewayConfig.model_validate(raw)
 
 
 def load_config_from_env() -> GatewayConfig:
     return load_config(os.environ.get("LOCAL_FUSION_CONFIG", "config.yaml"))
+
+
+def _expand_env_vars(value: Any) -> Any:
+    if isinstance(value, str):
+        return os.path.expandvars(value)
+    if isinstance(value, list):
+        return [_expand_env_vars(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand_env_vars(item) for key, item in value.items()}
+    return value

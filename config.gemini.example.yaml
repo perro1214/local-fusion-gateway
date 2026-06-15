@@ -1,0 +1,21 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+  request_timeout_seconds: 120
+
+fusion:
+  default_analysis_models:
+    - "gemini-panel-a"
+  default_judge_model: "gemini-judge"
+
+models:
+  gemini-panel-a:
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: "${GEMINI_API_KEY}"
+    model: "gemini-3.5-flash"
+
+  gemini-judge:
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: "${GEMINI_API_KEY}"
+    model: "gemini-3.5-flash"
+

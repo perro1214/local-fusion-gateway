@@ -34,6 +34,8 @@ models:
     model: "qwen3:8b"
 ```
 
+Environment variables in YAML values are expanded when the config is loaded, so API keys can be referenced as `${GEMINI_API_KEY}` instead of being written into the file.
+
 ## Run
 
 ```bash
@@ -73,6 +75,29 @@ curl http://127.0.0.1:8080/v1/chat/completions \
     "messages": [{"role": "user", "content": "Compare ridge, lasso, and elastic-net regression."}]
   }'
 ```
+
+## Gemini API Smoke Test
+
+Gemini's OpenAI-compatible endpoint can be used as a quick external backend test. The official base URL is:
+
+```text
+https://generativelanguage.googleapis.com/v1beta/openai/
+```
+
+Run a direct proxy smoke test through the Gateway code without starting a server:
+
+```bash
+export GEMINI_API_KEY="..."
+uv run --extra dev python scripts/smoke_gemini.py
+```
+
+Run the Fusion path too:
+
+```bash
+uv run --extra dev python scripts/smoke_gemini.py --fusion
+```
+
+The Fusion smoke test uses one panel model plus one judge model, both configured in `config.gemini.example.yaml`. Because the same Gemini model is used for both logical roles, this is only a connectivity and pipeline test, not a quality benchmark.
 
 ## Explicit Fusion Tool Request
 
