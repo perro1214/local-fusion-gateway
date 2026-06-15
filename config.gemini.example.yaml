@@ -12,9 +12,9 @@ models:
   gemini-panel-a:
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
     api_key: "${GEMINI_API_KEY}"
-    model: "gemini-flash-lite-latest"
+    model: "models/gemini-2.5-flash-lite"
 
   gemini-judge:
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
     api_key: "${GEMINI_API_KEY}"
-    model: "gemini-flash-lite-latest"
+    model: "models/gemini-2.5-flash-lite"

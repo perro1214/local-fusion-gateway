@@ -103,7 +103,7 @@ If the preliminary proxy request hits a transient Gemini `503 high demand`, skip
 uv run --extra dev python scripts/smoke_gemini.py --fusion-only
 ```
 
-The sample config defaults to `gemini-flash-lite-latest` because it is inexpensive and suitable for smoke tests. You can temporarily override the Gemini model used by all logical roles:
+The sample config defaults to `models/gemini-2.5-flash-lite` because it is inexpensive and suitable for smoke tests. You can temporarily override the Gemini model used by all logical roles:
 
 ```bash
 uv run --extra dev python scripts/smoke_gemini.py --fusion-only --model gemini-flash-latest
