@@ -4,23 +4,30 @@ import os
 
 import uvicorn
 
+from .app import create_app
+from .config import GatewayConfig, load_config
+
 
 def main() -> None:
     config_path = os.environ.get("LOCAL_FUSION_CONFIG", "config.yaml")
-    host = os.environ.get("LOCAL_FUSION_HOST", "127.0.0.1")
-    port = int(os.environ.get("LOCAL_FUSION_PORT", "8080"))
+    config = _load_optional_config(config_path)
+    host = os.environ.get("LOCAL_FUSION_HOST") or (config.server.host if config else "127.0.0.1")
+    port = int(os.environ.get("LOCAL_FUSION_PORT") or (config.server.port if config else 8080))
     uvicorn.run(
-        "local_fusion_gateway.app:create_app",
+        create_app(config),
         host=host,
         port=port,
-        factory=True,
         reload=False,
-        env_file=None,
-        app_dir=None,
         log_level=os.environ.get("LOCAL_FUSION_LOG_LEVEL", "info"),
         lifespan="auto",
-        headers=[("x-local-fusion-config", config_path)],
     )
+
+
+def _load_optional_config(config_path: str) -> GatewayConfig | None:
+    try:
+        return load_config(config_path)
+    except FileNotFoundError:
+        return None
 
 
 if __name__ == "__main__":
