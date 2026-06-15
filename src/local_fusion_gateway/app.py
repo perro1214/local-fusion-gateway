@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from .client import BackendClient
 from .config import GatewayConfig, UnknownModelError, load_config_from_env
+from .fusion import FusionError, FusionOrchestrator, is_fusion_request
 from .schemas import ChatCompletionRequest
 
 
@@ -31,6 +32,29 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
         raw_request: Request,
     ) -> dict[str, Any]:
         gateway_config = _require_config(raw_request.app)
+        if is_fusion_request(request):
+            orchestrator = FusionOrchestrator(gateway_config)
+            try:
+                fusion_result = await orchestrator.run(request)
+            except FusionError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "message": str(exc),
+                        "type": "fusion_error",
+                        "failure_reason": exc.failure_reason,
+                        "failed_models": [
+                            {
+                                "model": failed.model,
+                                "error": failed.error,
+                                "status_code": failed.status_code,
+                            }
+                            for failed in exc.failed_models
+                        ],
+                    },
+                ) from exc
+            return fusion_result.final_payload
+
         try:
             backend_model = gateway_config.resolve_model(request.model)
         except UnknownModelError as exc:

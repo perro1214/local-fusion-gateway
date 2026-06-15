@@ -55,4 +55,3 @@ class BackendClient:
             payload=response.json(),
             status_code=response.status_code,
         )
-

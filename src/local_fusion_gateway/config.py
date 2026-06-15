@@ -56,4 +56,3 @@ def load_config(path: str | os.PathLike[str]) -> GatewayConfig:
 
 def load_config_from_env() -> GatewayConfig:
     return load_config(os.environ.get("LOCAL_FUSION_CONFIG", "config.yaml"))
-

@@ -41,4 +41,3 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatChoice]
     usage: dict[str, Any] | None = None
-
