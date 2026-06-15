@@ -18,6 +18,63 @@ FUSION_MODEL = "openrouter/fusion"
 FUSION_TOOL = "openrouter:fusion"
 WEB_TOOL_PREFIX = "openrouter:web_"
 MAX_ANALYSIS_MODELS = 8
+FUSION_ANALYSIS_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "consensus": {"type": "array", "items": {"type": "string"}},
+        "contradictions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "stances": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "model": {"type": "string"},
+                                "stance": {"type": "string"},
+                            },
+                            "required": ["model", "stance"],
+                        },
+                    },
+                },
+                "required": ["topic", "stances"],
+            },
+        },
+        "partial_coverage": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "models": {"type": "array", "items": {"type": "string"}},
+                    "point": {"type": "string"},
+                },
+                "required": ["models", "point"],
+            },
+        },
+        "unique_insights": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "model": {"type": "string"},
+                    "insight": {"type": "string"},
+                },
+                "required": ["model", "insight"],
+            },
+        },
+        "blind_spots": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "consensus",
+        "contradictions",
+        "partial_coverage",
+        "unique_insights",
+        "blind_spots",
+    ],
+}
 
 
 @dataclass(slots=True)
@@ -199,8 +256,34 @@ class FusionOrchestrator:
         panel_responses: list[PanelResponse],
     ) -> BackendResult:
         judge = self._config.resolve_model(settings.judge_model)
-        payload = build_judge_payload(request, judge, settings, panel_responses)
-        return await self._client.chat_completion(settings.judge_model, judge, payload)
+        payload = build_judge_payload(
+            request,
+            judge,
+            settings,
+            panel_responses,
+            use_response_format=True,
+        )
+        try:
+            return await self._client.chat_completion(settings.judge_model, judge, payload)
+        except httpx.HTTPStatusError as exc:
+            if not _should_retry_without_response_format(exc):
+                raise
+            LOGGER.info(
+                "Retrying Fusion judge without response_format after upstream %s.",
+                exc.response.status_code,
+            )
+        fallback_payload = build_judge_payload(
+            request,
+            judge,
+            settings,
+            panel_responses,
+            use_response_format=False,
+        )
+        return await self._client.chat_completion(
+            settings.judge_model,
+            judge,
+            fallback_payload,
+        )
 
     async def _run_synthesis(
         self,
@@ -232,6 +315,8 @@ def build_judge_payload(
     judge_model: ModelConfig,
     settings: FusionSettings,
     panel_responses: list[PanelResponse],
+    *,
+    use_response_format: bool = True,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": judge_model.model,
@@ -241,8 +326,8 @@ def build_judge_payload(
                 "role": "system",
                 "content": (
                     "You are the judge in a local Fusion pipeline. Compare panel "
-                    "answers and return only valid JSON with keys: consensus, "
-                    "contradictions, partial_coverage, unique_insights, blind_spots."
+                    "answers and return only JSON matching the requested schema. "
+                    "Do not include prose, Markdown, code fences, or commentary."
                 ),
             },
             {
@@ -257,6 +342,14 @@ def build_judge_payload(
             },
         ],
     }
+    if use_response_format:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "fusion_analysis",
+                "schema": FUSION_ANALYSIS_JSON_SCHEMA,
+            },
+        }
     _apply_inner_generation_settings(payload, settings)
     return payload
 
@@ -373,6 +466,10 @@ def _judge_failure_reason(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return "judge_upstream_error"
     return "judge_empty_completion"
+
+
+def _should_retry_without_response_format(exc: httpx.HTTPStatusError) -> bool:
+    return exc.response.status_code in {400, 422}
 
 
 def _log_unsupported_web_tools(tools: list[dict[str, Any]]) -> None:
