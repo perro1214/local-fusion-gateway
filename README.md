@@ -13,6 +13,7 @@ The implementation follows the local v1 policy in `../方針.md`.
 - Fusion execution when `tool_choice` is `required` and `tools` contains `openrouter:fusion`
 - Parallel panel calls with partial-failure tolerance
 - Judge JSON parsing with degraded fallback when the judge does not return valid JSON
+- Non-streaming chat completions only
 
 v1 intentionally does not execute `openrouter:web_search` or `openrouter:web_fetch`. Those tools are accepted in Fusion parameters but ignored.
 

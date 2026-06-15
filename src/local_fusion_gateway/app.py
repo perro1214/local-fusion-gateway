@@ -31,6 +31,15 @@ def create_app(config: GatewayConfig | None = None) -> FastAPI:
         request: ChatCompletionRequest,
         raw_request: Request,
     ) -> dict[str, Any]:
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Streaming chat completions are not supported in v1.",
+                    "type": "streaming_unsupported",
+                },
+            )
+
         gateway_config = _require_config(raw_request.app)
         if is_fusion_request(request):
             orchestrator = FusionOrchestrator(gateway_config)

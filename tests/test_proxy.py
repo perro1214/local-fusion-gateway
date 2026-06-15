@@ -89,3 +89,19 @@ def test_missing_config_only_blocks_chat_endpoint() -> None:
     assert health.status_code == 200
     assert chat.status_code == 500
     assert chat.json()["detail"]["type"] == "configuration_error"
+
+
+def test_streaming_request_returns_400() -> None:
+    client = TestClient(create_app(make_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "local-a",
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["type"] == "streaming_unsupported"
