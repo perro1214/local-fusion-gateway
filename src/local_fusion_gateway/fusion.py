@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -91,6 +92,63 @@ class PanelResponse:
 
 
 @dataclass(slots=True)
+class PanelTrace:
+    model: str
+    success: bool
+    latency_ms: float
+    status_code: int | None = None
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class StepTrace:
+    model: str
+    success: bool
+    latency_ms: float
+    status_code: int | None = None
+    error: str | None = None
+    retry_without_response_format: bool = False
+
+
+@dataclass(slots=True)
+class FusionTrace:
+    request_id: str | None
+    panel_models: list[str]
+    judge_model: str
+    panels: list[PanelTrace] = field(default_factory=list)
+    judge: StepTrace | None = None
+    synthesis: StepTrace | None = None
+    failed_models: list[FailedModel] = field(default_factory=list)
+    analysis_present: bool = False
+    degraded_reason: str | None = None
+    total_latency_ms: float = 0
+
+    def to_debug_metadata(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "panel_models": self.panel_models,
+            "judge_model": self.judge_model,
+            "failed_models": [asdict(failed) for failed in self.failed_models],
+            "analysis_present": self.analysis_present,
+            "degraded_reason": self.degraded_reason,
+            "latency_ms": {
+                "total": _round_ms(self.total_latency_ms),
+                "panels": [
+                    {
+                        "model": panel.model,
+                        "success": panel.success,
+                        "latency_ms": _round_ms(panel.latency_ms),
+                        "status_code": panel.status_code,
+                    }
+                    for panel in self.panels
+                ],
+                "judge": _step_latency_metadata(self.judge),
+                "synthesis": _step_latency_metadata(self.synthesis),
+            },
+        }
+
+
+@dataclass(slots=True)
 class FusionSettings:
     analysis_models: list[str]
     judge_model: str
@@ -107,6 +165,7 @@ class FusionResult:
     panel_responses: list[PanelResponse]
     failed_models: list[FailedModel]
     analysis: dict[str, Any] | None
+    trace: FusionTrace
     degraded_reason: str | None = None
 
 
@@ -120,6 +179,13 @@ class FusionError(RuntimeError):
         super().__init__(message)
         self.failure_reason = failure_reason
         self.failed_models = failed_models or []
+
+
+class StepExecutionError(RuntimeError):
+    def __init__(self, original: Exception, trace: StepTrace) -> None:
+        super().__init__(str(original))
+        self.original = original
+        self.trace = trace
 
 
 def is_fusion_request(request: ChatCompletionRequest) -> bool:
@@ -190,10 +256,24 @@ class FusionOrchestrator:
         self._config = config
         self._client = BackendClient(config.server.request_timeout_seconds)
 
-    async def run(self, request: ChatCompletionRequest) -> FusionResult:
+    async def run(
+        self,
+        request: ChatCompletionRequest,
+        request_id: str | None = None,
+    ) -> FusionResult:
+        total_start = time.perf_counter()
         settings = resolve_fusion_settings(self._config, request)
-        panel_results, failed_models = await self._run_panel(request, settings)
+        trace = FusionTrace(
+            request_id=request_id,
+            panel_models=settings.analysis_models,
+            judge_model=settings.judge_model,
+        )
+        panel_results, failed_models, panel_traces = await self._run_panel(request, settings)
+        trace.panels = panel_traces
+        trace.failed_models = failed_models
         if not panel_results:
+            trace.total_latency_ms = _elapsed_ms(total_start)
+            _log_fusion_trace("fusion_all_panels_failed", trace)
             raise FusionError(
                 "All Fusion panel models failed.",
                 failure_reason="all_panels_failed",
@@ -203,13 +283,30 @@ class FusionOrchestrator:
         analysis: dict[str, Any] | None = None
         degraded_reason: str | None = None
         try:
-            judge_result = await self._run_judge(request, settings, panel_results)
+            judge_result, judge_trace = await self._run_judge(request, settings, panel_results)
+            trace.judge = judge_trace
             analysis = parse_analysis_json(judge_result.content)
+        except StepExecutionError as exc:
+            trace.judge = exc.trace
+            degraded_reason = _judge_failure_reason(exc.original)
+            trace.degraded_reason = degraded_reason
+            LOGGER.warning("Fusion judge degraded: %s", exc.original)
         except (httpx.HTTPError, UnknownModelError, ValueError) as exc:
             degraded_reason = _judge_failure_reason(exc)
+            trace.degraded_reason = degraded_reason
             LOGGER.warning("Fusion judge degraded: %s", exc)
 
-        final_result = await self._run_synthesis(request, settings, panel_results, analysis)
+        final_result, synthesis_trace = await self._run_synthesis(
+            request,
+            settings,
+            panel_results,
+            analysis,
+        )
+        trace.synthesis = synthesis_trace
+        trace.analysis_present = analysis is not None
+        trace.degraded_reason = degraded_reason
+        trace.total_latency_ms = _elapsed_ms(total_start)
+        _log_fusion_trace("fusion_completed", trace)
         final_payload = dict(final_result.payload)
         final_payload["model"] = request.model
         return FusionResult(
@@ -217,6 +314,7 @@ class FusionOrchestrator:
             panel_responses=panel_results,
             failed_models=failed_models,
             analysis=analysis,
+            trace=trace,
             degraded_reason=degraded_reason,
         )
 
@@ -224,37 +322,67 @@ class FusionOrchestrator:
         self,
         request: ChatCompletionRequest,
         settings: FusionSettings,
-    ) -> tuple[list[PanelResponse], list[FailedModel]]:
+    ) -> tuple[list[PanelResponse], list[FailedModel], list[PanelTrace]]:
         tasks = [
             self._run_panel_model(model_name, request, settings)
             for model_name in settings.analysis_models
         ]
-        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        raw_results = await asyncio.gather(*tasks)
         responses: list[PanelResponse] = []
         failed_models: list[FailedModel] = []
-        for model_name, raw_result in zip(settings.analysis_models, raw_results, strict=True):
-            if isinstance(raw_result, Exception):
-                failed_models.append(_failed_model(model_name, raw_result))
+        panel_traces: list[PanelTrace] = []
+        for model_name, result, failed_model, panel_trace in raw_results:
+            panel_traces.append(panel_trace)
+            if failed_model is not None:
+                failed_models.append(failed_model)
                 continue
-            responses.append(PanelResponse(model=model_name, content=raw_result.content))
-        return responses, failed_models
+            if result is not None:
+                responses.append(PanelResponse(model=model_name, content=result.content))
+        return responses, failed_models, panel_traces
 
     async def _run_panel_model(
         self,
         model_name: str,
         request: ChatCompletionRequest,
         settings: FusionSettings,
-    ) -> BackendResult:
-        model = self._config.resolve_model(model_name)
-        payload = build_inner_payload(request, model, settings)
-        return await self._client.chat_completion(model_name, model, payload)
+    ) -> tuple[str, BackendResult | None, FailedModel | None, PanelTrace]:
+        start = time.perf_counter()
+        try:
+            model = self._config.resolve_model(model_name)
+            payload = build_inner_payload(request, model, settings)
+            result = await self._client.chat_completion(model_name, model, payload)
+            return (
+                model_name,
+                result,
+                None,
+                PanelTrace(
+                    model=model_name,
+                    success=True,
+                    latency_ms=_elapsed_ms(start),
+                    status_code=result.status_code,
+                ),
+            )
+        except Exception as exc:
+            failed_model = _failed_model(model_name, exc)
+            return (
+                model_name,
+                None,
+                failed_model,
+                PanelTrace(
+                    model=model_name,
+                    success=False,
+                    latency_ms=_elapsed_ms(start),
+                    status_code=failed_model.status_code,
+                    error=_safe_error(exc),
+                ),
+            )
 
     async def _run_judge(
         self,
         request: ChatCompletionRequest,
         settings: FusionSettings,
         panel_responses: list[PanelResponse],
-    ) -> BackendResult:
+    ) -> tuple[BackendResult, StepTrace]:
         judge = self._config.resolve_model(settings.judge_model)
         payload = build_judge_payload(
             request,
@@ -263,11 +391,32 @@ class FusionOrchestrator:
             panel_responses,
             use_response_format=True,
         )
+        start = time.perf_counter()
+        retry_without_response_format = False
         try:
-            return await self._client.chat_completion(settings.judge_model, judge, payload)
+            result = await self._client.chat_completion(settings.judge_model, judge, payload)
+            return (
+                result,
+                StepTrace(
+                    model=settings.judge_model,
+                    success=True,
+                    latency_ms=_elapsed_ms(start),
+                    status_code=result.status_code,
+                ),
+            )
         except httpx.HTTPStatusError as exc:
             if not _should_retry_without_response_format(exc):
-                raise
+                raise StepExecutionError(
+                    exc,
+                    StepTrace(
+                        model=settings.judge_model,
+                        success=False,
+                        latency_ms=_elapsed_ms(start),
+                        status_code=exc.response.status_code,
+                        error=_safe_error(exc),
+                    ),
+                ) from exc
+            retry_without_response_format = True
             LOGGER.info(
                 "Retrying Fusion judge without response_format after upstream %s.",
                 exc.response.status_code,
@@ -279,10 +428,35 @@ class FusionOrchestrator:
             panel_responses,
             use_response_format=False,
         )
-        return await self._client.chat_completion(
-            settings.judge_model,
-            judge,
-            fallback_payload,
+        try:
+            result = await self._client.chat_completion(
+                settings.judge_model,
+                judge,
+                fallback_payload,
+            )
+        except httpx.HTTPError as exc:
+            raise StepExecutionError(
+                exc,
+                StepTrace(
+                    model=settings.judge_model,
+                    success=False,
+                    latency_ms=_elapsed_ms(start),
+                    status_code=exc.response.status_code
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else None,
+                    error=_safe_error(exc),
+                    retry_without_response_format=retry_without_response_format,
+                ),
+            ) from exc
+        return (
+            result,
+            StepTrace(
+                model=settings.judge_model,
+                success=True,
+                latency_ms=_elapsed_ms(start),
+                status_code=result.status_code,
+                retry_without_response_format=retry_without_response_format,
+            ),
         )
 
     async def _run_synthesis(
@@ -291,10 +465,20 @@ class FusionOrchestrator:
         settings: FusionSettings,
         panel_responses: list[PanelResponse],
         analysis: dict[str, Any] | None,
-    ) -> BackendResult:
+    ) -> tuple[BackendResult, StepTrace]:
         judge = self._config.resolve_model(settings.judge_model)
         payload = build_synthesis_payload(request, judge, settings, panel_responses, analysis)
-        return await self._client.chat_completion(settings.judge_model, judge, payload)
+        start = time.perf_counter()
+        result = await self._client.chat_completion(settings.judge_model, judge, payload)
+        return (
+            result,
+            StepTrace(
+                model=settings.judge_model,
+                success=True,
+                latency_ms=_elapsed_ms(start),
+                status_code=result.status_code,
+            ),
+        )
 
 
 def build_inner_payload(
@@ -470,6 +654,46 @@ def _judge_failure_reason(exc: Exception) -> str:
 
 def _should_retry_without_response_format(exc: httpx.HTTPStatusError) -> bool:
     return exc.response.status_code in {400, 422}
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000
+
+
+def _round_ms(value: float) -> float:
+    return round(value, 2)
+
+
+def _step_latency_metadata(step: StepTrace | None) -> dict[str, Any] | None:
+    if step is None:
+        return None
+    return {
+        "model": step.model,
+        "success": step.success,
+        "latency_ms": _round_ms(step.latency_ms),
+        "status_code": step.status_code,
+        "retry_without_response_format": step.retry_without_response_format,
+    }
+
+
+def _safe_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"upstream_status_{exc.response.status_code}"
+    return exc.__class__.__name__
+
+
+def _log_fusion_trace(event: str, trace: FusionTrace) -> None:
+    LOGGER.info(
+        "local_fusion_event %s",
+        json.dumps(
+            {
+                "event": event,
+                **trace.to_debug_metadata(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
 
 
 def _log_unsupported_web_tools(tools: list[dict[str, Any]]) -> None:

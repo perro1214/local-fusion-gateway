@@ -57,6 +57,7 @@ def test_proxy_rewrites_logical_model_to_backend_model() -> None:
     )
 
     assert response.status_code == 200
+    assert response.headers["x-request-id"]
     assert response.json()["choices"][0]["message"]["content"] == "proxied"
     request = route.calls.last.request
     assert request.headers["authorization"] == "Bearer secret-a"
@@ -74,7 +75,21 @@ def test_unknown_model_returns_404() -> None:
     )
 
     assert response.status_code == 404
+    assert response.headers["x-request-id"]
     assert response.json()["detail"]["type"] == "unknown_model"
+
+
+def test_existing_request_id_is_preserved() -> None:
+    client = TestClient(create_app(make_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"X-Request-ID": "test-request-id"},
+        json={"model": "missing", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"] == "test-request-id"
 
 
 def test_missing_config_only_blocks_chat_endpoint() -> None:
@@ -104,4 +119,5 @@ def test_streaming_request_returns_400() -> None:
     )
 
     assert response.status_code == 400
+    assert response.headers["x-request-id"]
     assert response.json()["detail"]["type"] == "streaming_unsupported"

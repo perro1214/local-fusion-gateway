@@ -33,6 +33,11 @@ def main() -> int:
         "--model",
         help="Override every configured backend model name for this smoke test.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Ask the gateway to include local_fusion debug metadata.",
+    )
     args = parser.parse_args()
 
     if not os.environ.get("GEMINI_API_KEY"):
@@ -45,9 +50,11 @@ def main() -> int:
         _override_backend_model(config, args.model)
 
     client = TestClient(create_app(config))
+    headers = {"X-Local-Fusion-Debug": "true"} if args.debug else {}
     if not args.fusion_only:
         proxy_response = client.post(
             "/v1/chat/completions",
+            headers=headers,
             json={
                 "model": "gemini-panel-a",
                 "messages": [{"role": "user", "content": "Reply with exactly: gateway ok"}],
@@ -65,6 +72,7 @@ def main() -> int:
 
     fusion_response = client.post(
         "/v1/chat/completions",
+        headers=headers,
         json={
             "model": "openrouter/fusion",
             "messages": [

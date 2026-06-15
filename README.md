@@ -14,6 +14,7 @@ The implementation follows the local v1 policy in `../方針.md`.
 - Parallel panel calls with partial-failure tolerance
 - Judge JSON parsing with degraded fallback when the judge does not return valid JSON
 - Non-streaming chat completions only
+- Optional Fusion debug metadata with `X-Local-Fusion-Debug: true`
 
 v1 intentionally does not execute `openrouter:web_search` or `openrouter:web_fetch`. Those tools are accepted in Fusion parameters but ignored.
 
@@ -70,11 +71,14 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
+  -H 'X-Local-Fusion-Debug: true' \
   -d '{
     "model": "openrouter/fusion",
     "messages": [{"role": "user", "content": "Compare ridge, lasso, and elastic-net regression."}]
   }'
 ```
+
+When debug is enabled, the response includes a top-level `local_fusion` object with request id, model names, latency, failed models, and degradation state. It does not include user prompt text or panel response text.
 
 ## Gemini API Smoke Test
 
@@ -101,6 +105,12 @@ If the preliminary proxy request hits a transient Gemini `503 high demand`, skip
 
 ```bash
 uv run --extra dev python scripts/smoke_gemini.py --fusion-only
+```
+
+Show local Fusion debug metadata in the smoke response:
+
+```bash
+uv run --extra dev python scripts/smoke_gemini.py --fusion-only --debug
 ```
 
 The sample config defaults to `models/gemini-2.5-flash-lite` because it is inexpensive and suitable for smoke tests. You can temporarily override the Gemini model used by all logical roles:

@@ -156,8 +156,10 @@ def test_model_slug_runs_fusion_panel_judge_and_synthesis() -> None:
     )
 
     assert response.status_code == 200
+    assert response.headers["x-request-id"]
     assert response.json()["model"] == "openrouter/fusion"
     assert response.json()["choices"][0]["message"]["content"] == "final"
+    assert "local_fusion" not in response.json()
     assert panel_a.called
     assert panel_b.called
     assert judge.call_count == 2
@@ -257,6 +259,7 @@ def test_all_panel_failures_return_hard_failure() -> None:
     )
 
     assert response.status_code == 502
+    assert response.headers["x-request-id"]
     assert response.json()["detail"]["failure_reason"] == "all_panels_failed"
     assert len(response.json()["detail"]["failed_models"]) == 2
 
@@ -322,3 +325,109 @@ def test_judge_unsupported_response_format_retries_without_it() -> None:
     synthesis_payload = json.loads(judge.calls[2].request.content)
     synthesis_user_payload = json.loads(synthesis_payload["messages"][1]["content"])
     assert synthesis_user_payload["analysis"]["consensus"] == ["shared"]
+
+
+@respx.mock
+def test_fusion_debug_header_adds_safe_metadata() -> None:
+    respx.post("http://panel-a.test/v1/chat/completions").mock(
+        return_value=completion("panel a", "actual-panel-a")
+    )
+    respx.post("http://panel-b.test/v1/chat/completions").mock(
+        return_value=completion("panel b", "actual-panel-b")
+    )
+    respx.post("http://judge.test/v1/chat/completions").mock(
+        side_effect=[
+            completion(valid_analysis(), "actual-judge"),
+            completion("final", "actual-judge"),
+        ]
+    )
+    client = TestClient(create_app(make_fusion_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={
+            "X-Local-Fusion-Debug": "true",
+            "X-Request-ID": "debug-request-id",
+        },
+        json={
+            "model": "openrouter/fusion",
+            "messages": [{"role": "user", "content": "compare options"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "debug-request-id"
+    metadata = response.json()["local_fusion"]
+    assert metadata["request_id"] == "debug-request-id"
+    assert metadata["panel_models"] == ["panel-a", "panel-b"]
+    assert metadata["judge_model"] == "judge"
+    assert metadata["analysis_present"] is True
+    assert metadata["degraded_reason"] is None
+    assert metadata["failed_models"] == []
+    assert metadata["latency_ms"]["total"] >= 0
+    assert len(metadata["latency_ms"]["panels"]) == 2
+    serialized_metadata = json.dumps(metadata)
+    assert "compare options" not in serialized_metadata
+    assert "panel a" not in serialized_metadata
+    assert "panel b" not in serialized_metadata
+
+
+@respx.mock
+def test_fusion_debug_metadata_reports_degraded_judge() -> None:
+    respx.post("http://panel-a.test/v1/chat/completions").mock(
+        return_value=completion("panel a", "actual-panel-a")
+    )
+    respx.post("http://panel-b.test/v1/chat/completions").mock(
+        return_value=completion("panel b", "actual-panel-b")
+    )
+    respx.post("http://judge.test/v1/chat/completions").mock(
+        side_effect=[completion("not json", "actual-judge"), completion("final", "actual-judge")]
+    )
+    client = TestClient(create_app(make_fusion_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"X-Local-Fusion-Debug": "true"},
+        json={
+            "model": "openrouter/fusion",
+            "messages": [{"role": "user", "content": "compare options"}],
+        },
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()["local_fusion"]
+    assert metadata["analysis_present"] is False
+    assert metadata["degraded_reason"] == "judge_not_valid_json"
+
+
+@respx.mock
+def test_fusion_debug_metadata_reports_partial_panel_failure() -> None:
+    respx.post("http://panel-a.test/v1/chat/completions").mock(
+        return_value=completion("panel a", "actual-panel-a")
+    )
+    respx.post("http://panel-b.test/v1/chat/completions").mock(
+        return_value=httpx.Response(500, text="panel b failed")
+    )
+    respx.post("http://judge.test/v1/chat/completions").mock(
+        side_effect=[
+            completion(valid_analysis(), "actual-judge"),
+            completion("final", "actual-judge"),
+        ]
+    )
+    client = TestClient(create_app(make_fusion_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"X-Local-Fusion-Debug": "true"},
+        json={
+            "model": "openrouter/fusion",
+            "messages": [{"role": "user", "content": "compare options"}],
+        },
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()["local_fusion"]
+    assert metadata["failed_models"][0]["model"] == "panel-b"
+    assert metadata["failed_models"][0]["status_code"] == 500
+    panel_status = {panel["model"]: panel["success"] for panel in metadata["latency_ms"]["panels"]}
+    assert panel_status == {"panel-a": True, "panel-b": False}
