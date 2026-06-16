@@ -43,6 +43,9 @@ dev = [
     "respx>=0.21.0",
     "ruff>=0.6.0",
 ]
+bench = [
+    "lm-eval[api]>=0.4.8",
+]
 
 [project.scripts]
 local-fusion-gateway = "local_fusion_gateway.main:main"

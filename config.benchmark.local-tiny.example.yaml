@@ -1,0 +1,27 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+  request_timeout_seconds: 300
+
+fusion:
+  default_analysis_models:
+    - "ollama-qwen-tiny"
+    - "ollama-smollm-micro"
+    - "ollama-gemma-micro"
+  default_judge_model: "ollama-qwen-tiny"
+
+models:
+  ollama-qwen-tiny:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key: "ollama"
+    model: "qwen2.5:0.5b"
+
+  ollama-smollm-micro:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key: "ollama"
+    model: "smollm2:135m"
+
+  ollama-gemma-micro:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key: "ollama"
+    model: "gemma3:270m"

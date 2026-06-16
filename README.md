@@ -178,6 +178,46 @@ uv run --extra dev python scripts/smoke_gemini.py --fusion-only --model gemini-f
 
 The Fusion smoke test uses one panel model plus one judge model, both configured in `config.gemini.example.yaml`. Because the same Gemini model is used for both logical roles, this is only a connectivity and pipeline test, not a quality benchmark.
 
+## GSM8K Local Tiny Benchmark
+
+Use this benchmark to compare single local Ollama models against the Fusion pipeline on
+GSM8K CoT 8-shot strict-match. The first recommended run is limited to 128 questions.
+
+The benchmark config uses three very small Ollama models:
+
+- `qwen2.5:0.5b`
+- `smollm2:135m`
+- `gemma3:270m`
+
+Install benchmark dependencies:
+
+```bash
+uv sync --extra dev --extra bench
+```
+
+Check the exact `lm_eval` commands without running them:
+
+```bash
+uv run --extra bench python scripts/benchmark_gsm8k_local.py --dry-run
+```
+
+Run a 2-question smoke benchmark and pull any missing Ollama models:
+
+```bash
+uv run --extra bench python scripts/benchmark_gsm8k_local.py --limit 2 --pull-missing
+```
+
+Run the planned 128-question comparison:
+
+```bash
+uv run --extra bench python scripts/benchmark_gsm8k_local.py --limit 128 --pull-missing
+```
+
+Results are written under `benchmark-results/gsm8k-local-tiny/<timestamp>/`, which is
+gitignored. `summary.md` and `summary.json` report `strict-match` as the primary metric
+and `flexible-extract` as a reference metric. The Fusion target uses `openrouter/fusion`
+with all three tiny models as panel models and `qwen2.5:0.5b` as judge/synthesis model.
+
 ## Explicit Fusion Tool Request
 
 ```bash
