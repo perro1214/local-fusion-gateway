@@ -208,6 +208,60 @@ vastai show instances
 - そのため、2x RTX 3090で同じvLLM imageと同じINT8派生モデルを再試行する優先度は低い。次の安価な試行は、SGLang等の別runtime、またはvLLM image/versionを固定してから短時間で判定する。
 - 元モデルに近い条件で検証する場合は、A100 80GB / H100 / H200等の大容量VRAM構成を別候補として提示し、利用者の承認後に借りる。
 
+## 7. 次回の低コスト再試行案: SGLang
+
+vLLM経路で初期化に失敗したため、次回はSGLangのDiffusionGemma経路を優先候補にする。SGLang公式cookbookでは `google/diffusiongemma-26B-A4B-it` を `Gemma4Renoise` でserveする手順が示されている。
+
+参考:
+
+- https://lmsysorg.mintlify.app/cookbook/autoregressive/Google/DiffusionGemma
+- https://docs.sglang.ai/get_started/install.html
+
+安さ優先の候補条件:
+
+- まず2x RTX 3090 / 2x RTX 4090、driver `580` 以上、storage `250GB` 以上、`dph_total <= 0.30` 付近を探す。
+- 2x RTX 3090でOOMまたはruntime非対応なら、同じinstanceで粘らずdestroyする。
+- 公式checkpointはbf16相当で重いため、2x 24GBでは失敗する可能性がある。失敗した場合はA100 80GB / H100 / H200候補を提示してから借りる。
+- INT8派生 `aidendle94/diffusiongemma-26B-A4B-it-INT8-dynamic` をSGLangで試す場合は非公式経路として扱い、smokeが通らなければ即停止する。
+
+検索例:
+
+```bash
+vastai search offers \
+  'num_gpus >= 2 gpu_ram >= 24 dph_total <= 0.30 rentable=true verified=true direct_port_count>=1' \
+  --raw
+```
+
+作成例:
+
+```bash
+vastai create instance <OFFER_ID> \
+  --image lmsysorg/sglang:dev \
+  --disk 250 \
+  --ssh \
+  --direct \
+  --env '-p 30000:30000' \
+  --onstart-cmd 'mkdir -p /workspace && nohup python3 -m sglang.launch_server --model-path google/diffusiongemma-26B-A4B-it --dllm-algorithm Gemma4Renoise --trust-remote-code --tp-size 2 --host 0.0.0.0 --port 30000 > /workspace/sglang.log 2>&1 &'
+```
+
+疎通確認:
+
+```bash
+curl http://<PUBLIC_HOST>:<PUBLIC_PORT>/v1/models
+```
+
+```bash
+curl http://<PUBLIC_HOST>:<PUBLIC_PORT>/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer EMPTY' \
+  -d '{
+    "model": "google/diffusiongemma-26B-A4B-it",
+    "messages": [{"role": "user", "content": "Say hello in one short sentence."}],
+    "max_tokens": 64,
+    "temperature": 0
+  }'
+```
+
 ## 補足
 
 - 2x RTX 3090で失敗した場合は、同じinstanceで長く試行錯誤せず、destroyしてから次の候補を選び直す。
