@@ -198,6 +198,16 @@ destroy後に表示されなくなったことを確認する。
 vastai show instances
 ```
 
+## 6. 2026-06-16の検証メモ
+
+以下は実測済みの失敗条件。次回は同じ条件で長く粘らず、候補選定やruntimeを変える。
+
+- `vllm/vllm-openai:gemma` はdriver `550` / CUDA `12.4` の4x RTX 3060環境で起動直後に `cudaGetDeviceCount()` の `Error 804: forward compatibility was attempted on non supported HW` で失敗した。
+- driver `580` 以上の2x RTX 3090環境ではDocker imageのpullとvLLM worker/NCCL起動までは進んだ。
+- ただし `aidendle94/diffusiongemma-26B-A4B-it-INT8-dynamic` をvLLMで起動すると、`Engine core initialization failed` になった。短いsmoke向けに `--max-model-len 4096`、`--max-num-seqs 1`、`--enforce-eager`、`--override-generation-config '{"max_new_tokens":512}'` へ落としても、`diffusion_gemma.py` 内のfake tensor / matmul shape mismatchで止まった。
+- そのため、2x RTX 3090で同じvLLM imageと同じINT8派生モデルを再試行する優先度は低い。次の安価な試行は、SGLang等の別runtime、またはvLLM image/versionを固定してから短時間で判定する。
+- 元モデルに近い条件で検証する場合は、A100 80GB / H100 / H200等の大容量VRAM構成を別候補として提示し、利用者の承認後に借りる。
+
 ## 補足
 
 - 2x RTX 3090で失敗した場合は、同じinstanceで長く試行錯誤せず、destroyしてから次の候補を選び直す。
