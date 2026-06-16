@@ -328,6 +328,42 @@ def test_judge_unsupported_response_format_retries_without_it() -> None:
 
 
 @respx.mock
+def test_synthesis_timeout_returns_structured_fusion_error() -> None:
+    respx.post("http://panel-a.test/v1/chat/completions").mock(
+        return_value=completion("panel a", "actual-panel-a")
+    )
+    respx.post("http://panel-b.test/v1/chat/completions").mock(
+        return_value=completion("panel b", "actual-panel-b")
+    )
+    respx.post("http://judge.test/v1/chat/completions").mock(
+        side_effect=[
+            completion(valid_analysis(), "actual-judge"),
+            httpx.ReadTimeout("synthesis timed out"),
+        ]
+    )
+    client = TestClient(create_app(make_fusion_config()))
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "openrouter/fusion",
+            "messages": [{"role": "user", "content": "compare options"}],
+        },
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["failure_reason"] == "synthesis_timeout"
+    assert detail["failed_models"] == [
+        {
+            "model": "judge",
+            "error": "synthesis timed out",
+            "status_code": None,
+        }
+    ]
+
+
+@respx.mock
 def test_fusion_debug_header_adds_safe_metadata() -> None:
     respx.post("http://panel-a.test/v1/chat/completions").mock(
         return_value=completion("panel a", "actual-panel-a")

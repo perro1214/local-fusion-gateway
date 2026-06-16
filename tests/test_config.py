@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from local_fusion_gateway.config import GatewayConfig, load_config
+from local_fusion_gateway.main import _apply_env_overrides
 
 
 def test_config_model_validation() -> None:
@@ -41,3 +42,12 @@ models:
     config = load_config(config_path)
 
     assert config.models["gemini"].api_key == "test-gemini-key"
+
+
+def test_env_override_updates_request_timeout(monkeypatch) -> None:
+    config = GatewayConfig()
+    monkeypatch.setenv("LOCAL_FUSION_REQUEST_TIMEOUT_SECONDS", "1200")
+
+    _apply_env_overrides(config)
+
+    assert config.server.request_timeout_seconds == 1200

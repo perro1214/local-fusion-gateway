@@ -296,12 +296,23 @@ class FusionOrchestrator:
             trace.degraded_reason = degraded_reason
             LOGGER.warning("Fusion judge degraded: %s", exc)
 
-        final_result, synthesis_trace = await self._run_synthesis(
-            request,
-            settings,
-            panel_results,
-            analysis,
-        )
+        try:
+            final_result, synthesis_trace = await self._run_synthesis(
+                request,
+                settings,
+                panel_results,
+                analysis,
+            )
+        except StepExecutionError as exc:
+            trace.synthesis = exc.trace
+            trace.degraded_reason = _synthesis_failure_reason(exc.original)
+            trace.total_latency_ms = _elapsed_ms(total_start)
+            _log_fusion_trace("fusion_synthesis_failed", trace)
+            raise FusionError(
+                "Fusion synthesis failed.",
+                failure_reason=trace.degraded_reason,
+                failed_models=[_failed_model(settings.judge_model, exc.original)],
+            ) from exc.original
         trace.synthesis = synthesis_trace
         trace.analysis_present = analysis is not None
         trace.degraded_reason = degraded_reason
@@ -469,7 +480,21 @@ class FusionOrchestrator:
         judge = self._config.resolve_model(settings.judge_model)
         payload = build_synthesis_payload(request, judge, settings, panel_responses, analysis)
         start = time.perf_counter()
-        result = await self._client.chat_completion(settings.judge_model, judge, payload)
+        try:
+            result = await self._client.chat_completion(settings.judge_model, judge, payload)
+        except httpx.HTTPError as exc:
+            raise StepExecutionError(
+                exc,
+                StepTrace(
+                    model=settings.judge_model,
+                    success=False,
+                    latency_ms=_elapsed_ms(start),
+                    status_code=exc.response.status_code
+                    if isinstance(exc, httpx.HTTPStatusError)
+                    else None,
+                    error=_safe_error(exc),
+                ),
+            ) from exc
         return (
             result,
             StepTrace(
@@ -641,15 +666,25 @@ def _failed_model(model_name: str, exc: Exception) -> FailedModel:
         return FailedModel(
             model=model_name, error=exc.response.text, status_code=exc.response.status_code
         )
-    return FailedModel(model=model_name, error=str(exc))
+    return FailedModel(model=model_name, error=str(exc) or exc.__class__.__name__)
 
 
 def _judge_failure_reason(exc: Exception) -> str:
     if isinstance(exc, ValueError):
         return str(exc)
+    if isinstance(exc, httpx.TimeoutException):
+        return "judge_timeout"
     if isinstance(exc, httpx.HTTPStatusError):
         return "judge_upstream_error"
     return "judge_empty_completion"
+
+
+def _synthesis_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "synthesis_timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "synthesis_upstream_error"
+    return "synthesis_connection_error"
 
 
 def _should_retry_without_response_format(exc: httpx.HTTPStatusError) -> bool:

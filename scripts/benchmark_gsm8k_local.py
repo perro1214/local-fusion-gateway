@@ -24,7 +24,7 @@ DEFAULT_TASK = "gsm8k_cot"
 DEFAULT_LIMIT = 128
 DEFAULT_MAX_GEN_TOKS = 256
 DEFAULT_TEMPERATURE = 0
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 300
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 1200
 STRICT_METRIC_KEY = "exact_match,strict-match"
 STRICT_STDERR_KEY = "exact_match_stderr,strict-match"
 FLEXIBLE_METRIC_KEY = "exact_match,flexible-extract"
@@ -71,7 +71,7 @@ def main() -> int:
         _assert_ollama_models_present(config)
 
     summaries: list[RunSummary] = []
-    with _gateway_process(config_path, port):
+    with _gateway_process(config_path, port, args.request_timeout_seconds):
         _wait_for_gateway(port)
         for target in targets:
             summaries.append(_run_lm_eval(target, gateway_base_url, output_dir, args))
@@ -117,6 +117,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-gen-toks", type=int, default=DEFAULT_MAX_GEN_TOKS)
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--num-concurrent", type=int, default=1)
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        help=(
+            "Per-backend Gateway request timeout while the benchmark server is running. "
+            "Fusion can exceed the normal Gateway timeout on long GSM8K prompts."
+        ),
+    )
     parser.add_argument("--batch-size", default="1")
     parser.add_argument(
         "--targets",
@@ -186,11 +195,12 @@ def _ollama_model_names() -> set[str]:
 
 
 @contextmanager
-def _gateway_process(config_path: Path, port: int):
+def _gateway_process(config_path: Path, port: int, request_timeout_seconds: float):
     env = os.environ.copy()
     env["LOCAL_FUSION_CONFIG"] = str(config_path)
     env["LOCAL_FUSION_HOST"] = "127.0.0.1"
     env["LOCAL_FUSION_PORT"] = str(port)
+    env["LOCAL_FUSION_REQUEST_TIMEOUT_SECONDS"] = str(request_timeout_seconds)
     env.setdefault("LOCAL_FUSION_LOG_LEVEL", "warning")
     process = subprocess.Popen(
         [sys.executable, "-m", "local_fusion_gateway.main"],
@@ -361,6 +371,7 @@ def _write_summary(
         "limit": args.limit,
         "num_fewshot": args.num_fewshot,
         "metric": "strict-match",
+        "request_timeout_seconds": args.request_timeout_seconds,
         "generated_at": datetime.now(UTC).isoformat(),
         "runs": [asdict(summary) for summary in summaries],
     }
@@ -374,6 +385,7 @@ def _write_summary(
         f"- task: `{args.task}`",
         f"- limit: `{args.limit}`",
         f"- fewshot: `{args.num_fewshot}`",
+        f"- request timeout seconds: `{args.request_timeout_seconds:g}`",
         "- primary metric: `strict-match`",
         "",
         "| target | model | status | strict-match | flexible-extract | elapsed sec |",

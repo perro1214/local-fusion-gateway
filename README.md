@@ -210,13 +210,22 @@ uv run --extra bench python scripts/benchmark_gsm8k_local.py --limit 2 --pull-mi
 Run the planned 128-question comparison:
 
 ```bash
-uv run --extra bench python scripts/benchmark_gsm8k_local.py --limit 128 --pull-missing
+uv run --extra bench python scripts/benchmark_gsm8k_local.py \
+  --limit 128 \
+  --pull-missing \
+  --request-timeout-seconds 1200
 ```
 
 Results are written under `benchmark-results/gsm8k-local-tiny/<timestamp>/`, which is
 gitignored. `summary.md` and `summary.json` report `strict-match` as the primary metric
 and `flexible-extract` as a reference metric. The Fusion target uses `openrouter/fusion`
 with all three tiny models as panel models and `qwen2.5:0.5b` as judge/synthesis model.
+
+Fusion is much slower than the single-model targets because each benchmark item runs the
+three panel models plus judge and synthesis calls. Long GSM8K prompts can exceed the
+normal Gateway timeout, so the benchmark runner sets `LOCAL_FUSION_REQUEST_TIMEOUT_SECONDS`
+for its child Gateway process. Use `--request-timeout-seconds` to tune that value for your
+machine.
 
 ## Explicit Fusion Tool Request
 
